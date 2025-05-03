@@ -50,3 +50,88 @@ Ce projet sert principalement d'**exemple pédagogique**. Il est utile pour :
 ## Documentation
 
 Le code source contient une documentation détaillée au format Javadoc, expliquant chaque classe, méthode et concept.
+
+
+
+# // --- Exemple d'utilisation ---
+```
+public static void main(String[] args) {
+    // Crée un logger pour la classe "ApplicationMain" avec un niveau minimum INFO
+    // Il utilisera/créera le dossier logs/AAAA-MM-JJ/ et les fichiers info.log, warn.log, error.log, fatal.log à l'intérieur
+    Custom_Logger appLogger = new Custom_Logger("ApplicationMain", Level.INFO);
+
+    // --- IMPORTANT : Ajouter un Shutdown Hook pour s'assurer que close() est appelée ---
+    // Un shutdown hook est un thread qui s'exécute lorsque la JVM s'arrête proprement.
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        System.out.println("\nShutdown hook détecté. Fermeture du logger...");
+        appLogger.close(); // Appelle la méthode close() pour écrire le résumé et fermer les fichiers
+        System.out.println("Logger fermé via shutdown hook.");
+    }));
+    // Dans une application Swing, vous pourriez aussi appeler appLogger.close()
+    // dans un WindowListener de votre JFrame principal, géré par setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE).
+
+
+    // Loggue des messages de différents niveaux
+    appLogger.debug("Ceci est un message de debug (ne s'affiche pas si minLevel > DEBUG sur console et pas de fichier)."); // Niveau DEBUG
+    appLogger.info("Démarrage de l'application."); // Niveau INFO
+    appLogger.debug("Initialisation des sous-systèmes..."); // Niveau DEBUG
+
+    try {
+        // Simule une opération qui pourrait causer un avertissement ou une erreur
+        // On passe le logger aux méthodes pour qu'elles puissent journaliser
+        int result = divide(10, 0, appLogger);
+        appLogger.info("Résultat de la division : " + result);
+    } catch (Exception e) {
+        appLogger.error("Une erreur s'est produite lors de l'opération : " + e.getMessage()); // Niveau ERROR
+    }
+
+    appLogger.info("Traitement principal terminé."); // Niveau INFO
+    appLogger.warn("Configuration non standard détectée."); // Niveau WARN
+
+    // Simule une situation d'erreur FATAL
+    // Dans une vraie application, une erreur FATAL non gérée entraînerait probablement l'arrêt de la JVM
+    // et le shutdown hook serait déclenché.
+    if (Math.random() < 0.3) { // Petite chance de déclencher l'erreur FATAL simulée
+        appLogger.fatal("Simulation: L'application a rencontré une erreur irrécupérable et va s'arrêter."); // Niveau FATAL
+        // Ici, vous pourriez ajouter un System.exit(1); si cette erreur bloque réellement l'application
+    }
+
+
+    appLogger.info("Application en cours..."); // Ce message pourrait apparaître ou non selon l'erreur FATAL simulée
+
+    // L'appel à appLogger.close() est assuré par le Shutdown Hook ou une gestion manuelle à la sortie.
+    // Ne pas mettre de System.exit() ici si vous voulez que le hook s'exécute.
+}
+
+/**
+ * Petite méthode d'exemple pour montrer l'utilisation du logger dans d'autres méthodes.
+ * @param a Numérateur.
+ * @param b Dénominateur.
+ * @param logger L'instance du logger à utiliser.
+ * @return Le résultat de la division ou 0 si division par zéro avec avertissement.
+ */
+private static int divide(int a, int b, Custom_Logger logger) {
+    if (b == 0) {
+        logger.warn("Tentative de division par zéro (a=" + a + ", b=" + b + ")"); // Utilise le logger passé en paramètre
+        return 0; // Retourne 0 ou lancez une exception selon la logique du jeu
+    }
+    // Loggue en debug si le niveau minimum le permet
+    logger.debug("Division calculée : " + a + " / " + b + " = " + (a/b));
+    return a / b;
+}
+
+/**
+ * Méthode d'exemple pour simuler une situation pouvant nécessiter un log FATAL.
+ * @param logger L'instance du logger à utiliser.
+ */
+private static void simulateFatalError(Custom_Logger logger) {
+    // Dans une vraie application, une situation FATAL pourrait être:
+    // - Échec de l'initialisation critique (ex: base de données, réseau)
+    // - OutOfMemoryError non gérable
+    // - Erreur interne logique qui rend l'état du jeu incohérent et irrécupérable
+    logger.info("Tentative de simuler une situation FATAL (pour l'exemple)...");
+    // Ici, on journalise juste un message FATAL. Une vraie erreur FATAL
+    // (comme une Exception ou Error non gérée) entraînerait l'arrêt et le hook.
+    // Exemple: throw new OutOfMemoryError("Fake OOM for logging test");
+}
+```
