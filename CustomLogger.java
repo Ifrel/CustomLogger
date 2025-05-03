@@ -1,5 +1,3 @@
-package Vue.testsUI;
-
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -497,73 +495,5 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
 
         return summary.toString();
     }
-
-
-    // --- Exemple d'utilisation ---
-
-    public static void main(String[] args) {
-        // Configurer le niveau minimum global de journalisation au début de l'application
-        // Par défaut, il est INFO. On peut le changer ici si besoin.
-        // CustomLogger.setGlobalMinimumLevel(CustomLogger.Level.DEBUG); // Pour voir les messages DEBUG
-
-        // Obtenir des poignées de logger par nom dans différentes "classes"
-        // On utilise la méthode statique getLogger()
-        LoggerHandle mainLogger = CustomLogger.getLogger("com.yourcompany.yourgame.MainApp");
-        LoggerHandle uiLogger = CustomLogger.getLogger("com.yourcompany.yourgame.UI.GameScreen");
-        LoggerHandle gameLogicLogger = CustomLogger.getLogger("com.yourcompany.yourgame.GameLogic");
-
-
-        mainLogger.info("Application démarrée."); // Loggé via la poignée mainLogger
-
-        uiLogger.debug("Mise à jour de l'écran graphique."); // Loggé via la poignée uiLogger (s'affiche si niveau min <= DEBUG)
-
-        try {
-            // Simule une opération dans la logique du jeu qui loggue
-            gameLogicLogger.info("Tentative de division...");
-            int result = divide(10, 2, gameLogicLogger); // Passe la poignée logger à la méthode
-            gameLogicLogger.debug("Division réussie, résultat : " + result);
-
-            result = divide(10, 0, gameLogicLogger); // Passe la poignée logger
-            gameLogicLogger.info("Résultat de la division par zéro (géré) : " + result); // Loggué INFO
-        } catch (Exception e) {
-            gameLogicLogger.error("Une erreur inattendue s'est produite dans la logique du jeu : " + e.getMessage()); // Loggué ERROR
-        }
-
-        uiLogger.warn("Certaines ressources pourraient être manquantes."); // Loggué WARN
-
-        // Simule une erreur FATAL qui pourrait survenir dans le main
-        if (Math.random() < 0.4) { // 40% de chance de déclencher l'erreur FATAL simulée
-            mainLogger.fatal("Une erreur système critique a rendu l'application instable. Arrêt imminent."); // Loggué FATAL
-            // Dans une vraie situation FATAL non gérée, la JVM s'arrêterait, déclenchant le shutdown hook.
-        }
-
-
-        mainLogger.info("Application en cours d'exécution..."); // Ce message pourrait apparaître ou non selon l'erreur FATAL simulée
-
-        // L'appel à la méthode close() du gestionnaire singleton est géré automatiquement
-        // par le Shutdown Hook enregistré dans le constructeur de CustomLogger.
-        // Vous n'avez pas besoin d'appeler CustomLogger.INSTANCE.close() ici.
-        // Le hook assure que les logs finaux et le résumé sont écrits.
-    }
-
-    // Petite méthode d'exemple montrant comment utiliser une poignée de logger passée en paramètre
-    private static int divide(int a, int b, LoggerHandle logger) {
-        if (b == 0) {
-            logger.warn("Tentative de division par zéro !"); // Utilise la poignée passée en paramètre
-            return 0; // Retourne 0 ou lancez une exception selon la logique du jeu
-        }
-        // Loggue en debug si le niveau minimum le permet
-        logger.debug("Calcul de division : " + a + " / " + b + "."); // Loggué DEBUG
-        return a / b;
-    }
-
-    // Méthode d'exemple simulant une situation (non utilisée dans main ici, mais pour illustration)
-    private static void processData(LoggerHandle logger) {
-        logger.info("Traitement des données...");
-        // ... logique de traitement ...
-        logger.debug("Étape intermédiaire complétée.");
-        if (Math.random() > 0.8) {
-            logger.error("Erreur de validation des données.");
-        }
-    }
+    
 }
