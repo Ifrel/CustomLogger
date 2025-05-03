@@ -58,7 +58,7 @@ Le code source contient une documentation détaillée au format Javadoc, expliqu
 public static void main(String[] args) {
     // Crée un logger pour la classe "ApplicationMain" avec un niveau minimum INFO
     // Il utilisera/créera le dossier logs/AAAA-MM-JJ/ et les fichiers info.log, warn.log, error.log, fatal.log à l'intérieur
-    Custom_Logger appLogger = new Custom_Logger("ApplicationMain", Level.INFO);
+    CustomLogger appLogger = new CustomLogger("ApplicationMain", Level.INFO);
 
     // --- IMPORTANT : Ajouter un Shutdown Hook pour s'assurer que close() est appelée ---
     // Un shutdown hook est un thread qui s'exécute lorsque la JVM s'arrête proprement.
@@ -110,7 +110,7 @@ public static void main(String[] args) {
  * @param logger L'instance du logger à utiliser.
  * @return Le résultat de la division ou 0 si division par zéro avec avertissement.
  */
-private static int divide(int a, int b, Custom_Logger logger) {
+private static int divide(int a, int b, CustomLogger logger) {
     if (b == 0) {
         logger.warn("Tentative de division par zéro (a=" + a + ", b=" + b + ")"); // Utilise le logger passé en paramètre
         return 0; // Retourne 0 ou lancez une exception selon la logique du jeu
@@ -124,7 +124,7 @@ private static int divide(int a, int b, Custom_Logger logger) {
  * Méthode d'exemple pour simuler une situation pouvant nécessiter un log FATAL.
  * @param logger L'instance du logger à utiliser.
  */
-private static void simulateFatalError(Custom_Logger logger) {
+private static void simulateFatalError(CustomLogger logger) {
     // Dans une vraie application, une situation FATAL pourrait être:
     // - Échec de l'initialisation critique (ex: base de données, réseau)
     // - OutOfMemoryError non gérable
