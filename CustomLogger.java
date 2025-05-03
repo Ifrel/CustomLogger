@@ -1,4 +1,5 @@
-import javax.swing.*;
+package Vue.testsUI;
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -12,11 +13,16 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap; // Utiliser pour une Map thread-safe si getLogger est appelé concurrentiellement
 
 /**
- * Logger Personnalisé Basique avec un répertoire journalier par exécution et résumé par exécution.
+ * Gestionnaire de Logger Centralisé (Singleton) avec gestion de fichiers journaliers et résumé par exécution.
  * <p>
- * Ce logger crée un répertoire pour la date du jour si l'application est exécutée pour la première fois ce jour-là
+ * Cette classe implémente le modèle Singleton et sert de fabrique pour obtenir des instances de {@link LoggerHandle}
+ * nommées. Toutes les instances de {@link LoggerHandle} partagent la même configuration et écrivent
+ * dans les mêmes fichiers de log journaliers gérés par l'instance unique de cette classe.
+ * <p>
+ * Le logger crée un répertoire pour la date du jour si l'application est exécutée pour la première fois ce jour-là
  * (ex. logs/2025-05-03/). Les messages de chaque niveau (INFO, WARN, ERROR, FATAL) sont écrits
  * dans un fichier dédié (ex. info.log) à l'intérieur de ce répertoire journalier.
  * Si l'application est relancée le même jour, elle utilisera le même répertoire journalier
@@ -29,8 +35,10 @@ import java.util.Objects;
  * **NOTE IMPORTANTE :** Cette implémentation est simplifiée à des fins éducatives (ou des petits projets personnels)
  * et ne gère PAS toutes les complexités d'un framework de logging professionnel, telles que :
  * <ul>
- * <li>La stricte gestion de l'accès concurrent aux fichiers si plusieurs instances du logger
- * écrivent dans les mêmes fichiers exactement au même instant (risque faible mais existant).</li>
+ * <li>La stricte gestion de l'accès concurrent aux fichiers si plusieurs threads logguent intensément
+ * *exactement au même instant* (un {@code ConcurrentHashMap} est utilisé pour les poignées de logger,
+ * mais l'accès aux {@code PrintWriter} n'est pas explicitement synchronisé dans la méthode {@code log},
+ * ce qui pourrait causer de très rares problèmes d'entrelacement).</li>
  * <li>La rotation avancée (archivage et nettoyage automatique des anciens répertoires journaliers).</li>
  * <li>Une gestion d'erreurs robuste en cas de problème d'écriture (disque plein, permissions, etc.).</li>
  * <li>Une configuration externe (tout est dans le code).</li>
@@ -41,13 +49,15 @@ import java.util.Objects;
  * comme SLF4j couplé à Logback ou Log4j2.
  *
  * @author Ifrel Rinel MAKOUNDIKA KIDZOUNOU @see<a href="https://github.com/Ifrel"> mon github</a>
- * @version 1.1
+ * @version 1.2
  * @since 2025-05-03
  * @see <a href="https://www.slf4j.org/">SLF4j</a>
  * @see <a href="https://logback.qos.ch/">Logback</a>
  * @see <a href="https://logging.apache.org/log4j/2.x/">Apache Log4j 2</a>
  */
-public class CustomLogger {
+public class CustomLogger { // La classe principale devient le gestionnaire singleton
+
+
 
     /**
      * Niveaux de sévérité pour les messages de journalisation.
@@ -61,58 +71,66 @@ public class CustomLogger {
         FATAL  // Erreurs très graves, pouvant entraîner l'arrêt de l'application (ordinal 4)
     }
 
-    // --- Attributs du Logger ---
-    private final String loggerName;                // Nom de ce logger (souvent le nom de la classe qui l'utilise)
-    private Level minimumLevel;                     // Niveau minimum de message à traiter
-    private final LocalDateTime executionStartTime; // Timestamp du début de cette exécution
+    // --- Instance unique du gestionnaire (Singleton) ---
+    // Initialisation EAGER (dès le chargement de la classe)
+    // L'application principale peut configurer le niveau minimum ICI si nécessaire,
+    // avant que getLogger ne soit appelé pour la première fois.
+    private static final CustomLogger INSTANCE = new CustomLogger("Application"); // Nom par défaut du logger manager
+
+    // --- Attributs du Gestionnaire Singleton ---
+    private String managerName; // Nom de ce gestionnaire (pour les marqueurs d'exécution)
+    private Level minimumLevel; // Niveau minimum de message à traiter (configuration globale)
+    private LocalDateTime executionStartTime; // Timestamp du début de cette exécution
 
     // Mappe pour stocker les écrivains de fichier pour chaque niveau ayant un fichier dédié
-    // La clé est le niveau, la valeur est le PrintWriter pour le fichier correspondant dans le dossier journalier
-    private final Map<Level, PrintWriter> levelWriters;
-    private final Map<Level, Long> executionCounts;     // Mappe pour stocker le compte des messages loggés par cette exécution, par niveau
+    private Map<Level, PrintWriter> levelWriters;
+    // Mappe pour stocker le compte des messages loggés par cette exécution, par niveau
+    private Map<Level, Long> executionCounts;
+    // Mappe pour stocker les instances de LoggerHandle créées par nom (simple cache)
+    private final Map<String, LoggerHandle> loggerHandles; // Utiliser ConcurrentHashMap pour Thread Safety si getLogger est appelé par plusieurs threads
 
     // Formatteurs de date et heure
-    private DateTimeFormatter directoryDateFormatter;   // Pour le nom du répertoire journalier (date seule)
-    private DateTimeFormatter messageFormatter;         // Pour les timestamps dans les messages
+    private DateTimeFormatter directoryDateFormatter; // Pour le nom du répertoire journalier (date seule)
+    private DateTimeFormatter messageFormatter; // Pour les timestamps dans les messages
 
     // Définition des noms de base des fichiers de log par niveau ayant un fichier dédié (INFO et supérieurs)
-    private static final Map<Level, String> LOG_FILE_BASE_NAMES = new HashMap<>();
-    static {
+    private static Map<Level, String> LOG_FILE_BASE_NAMES;
+    private static Path BASE_LOG_DIRECTORY ;                // Répertoire de base pour tous les logs
+
+
+
+
+    /**
+     * Constructeur privé pour l'instance unique du gestionnaire de logger.
+     * Initialise le système de journalisation, crée les répertoires/fichiers, et écrit le marqueur de début.
+     *
+     * @param managerName Le nom du gestionnaire de logger (utilisé dans les marqueurs d'exécution).
+     * @throws RuntimeException si la création des répertoires ou l'ouverture d'un fichier échoue.
+     */
+    private CustomLogger(String managerName) {
+        this.managerName = Objects.requireNonNull(managerName, "Le nom du gestionnaire de logger ne peut pas être null.");
+        this.minimumLevel = Level.INFO; // Niveau minimum par défaut, peut être changé par setMinimumLevel()
+        this.executionStartTime = LocalDateTime.now(); // Enregistre l'heure de début de cette exécution
+
+        LOG_FILE_BASE_NAMES = new HashMap<>();
         // Associe un niveau au nom de base du fichier (ex: info.log)
         LOG_FILE_BASE_NAMES.put(Level.INFO, "info");
         LOG_FILE_BASE_NAMES.put(Level.WARN, "warn");
         LOG_FILE_BASE_NAMES.put(Level.ERROR, "error");
         LOG_FILE_BASE_NAMES.put(Level.FATAL, "fatal");
-        // Note: DEBUG n'est pas dans cette map, il n'est loggé qu'en console si le niveau minimum le permet.
         // Si vous voulez un fichier debug.log, ajoutez LOG_FILE_BASE_NAMES.put(Level.DEBUG, "debug"); ici.
-    }
-
-    private static final Path BASE_LOG_DIRECTORY = Paths.get("logs"); // Répertoire de base pour tous les logs
+        BASE_LOG_DIRECTORY = Paths.get(".logs"); // Répertoire de base pour tous les logs
 
 
-
-    /**
-     * Crée un nouveau Custom_Logger.
-     * Détermine la date du jour, crée le répertoire journalier si nécessaire,
-     * ouvre les fichiers de log journaliers en mode ajout, et écrit le marqueur de début d'exécution.
-     *
-     * @param loggerName   Le nom de ce logger (souvent le nom de la classe qui l'utilise).
-     * @param minimumLevel Le niveau minimum de messages qui seront traités (loggés).
-     * Les messages dont le niveau est strictement inférieur seront ignorés.
-     * @throws RuntimeException si la création des répertoires ou l'ouverture d'un fichier échoue.
-     */
-    public CustomLogger(String loggerName, Level minimumLevel) {
-        this.loggerName = Objects.requireNonNull(loggerName, "Le nom du logger ne peut pas être null.");
-        this.minimumLevel = Objects.requireNonNull(minimumLevel, "Le niveau minimum ne peut pas être null.");
-        this.executionStartTime = LocalDateTime.now(); // Enregistre l'heure de début de cette exécution
-
-        // Formatteurs de date et heure
-        this.directoryDateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd"); // Pour le nom du répertoire (date seule)
-        this.messageFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"); // Pour les timestamps dans les messages (ajout des millisecondes)
 
         // Initialiser les structures de données
         this.levelWriters = new HashMap<>();
-        this.executionCounts = new HashMap<>(); // Initialise les compteurs pour cette exécution
+        this.executionCounts = new HashMap<>();
+        this.loggerHandles = new ConcurrentHashMap<>(); // Utiliser ConcurrentHashMap pour la gestion des handles
+
+        // Formatteurs de date et heure
+        this.directoryDateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd"); // Pour le nom du répertoire (date seule)
+        this.messageFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"); // Pour les timestamps dans les messages
 
         // --- Création du répertoire journalier ---
         LocalDate today = LocalDate.now();
@@ -122,32 +140,97 @@ public class CustomLogger {
         try {
             // Créer le répertoire de base "logs" ET le sous-répertoire journalier s'ils n'existent pas
             Files.createDirectories(dailyLogDirectory);
-            // System.out.println("Répertoire journalier vérifié/créé: " + dailyLogDirectory.toAbsolutePath()); // Utile pour le débogage de l'initialisation
         } catch (IOException e) {
             System.err.println("ERREUR GRAVE: Impossible de créer le répertoire de logs journalier: " + dailyLogDirectory.toAbsolutePath());
             e.printStackTrace();
-            // Relancer une RuntimeException car l'écriture fichier ne sera pas possible
-            throw new RuntimeException("Impossible d'initialiser le logger fichier: création répertoire échouée.", e);
+            // L'écriture fichier ne sera pas possible, mais on ne relance pas d'exception ici
+            // pour permettre au logger de continuer à logger sur la console.
+            // Les levelWriters resteront vides.
         }
 
         // --- Initialiser les écrivains de fichier pour la journée en cours ---
+        // Cette méthode essaiera d'ouvrir les fichiers. Si le répertoire n'a pas pu être créé, cela échouera sans relancer d'exception.
         initFileWriters(dailyLogDirectory);
 
         // --- Écrire le marqueur de début d'exécution ---
-        // On écrit le marqueur avec un niveau INFO pour qu'il apparaisse dans info.log (et fichiers supérieurs)
-        writeExecutionMarker(Level.INFO, String.format("---------- Début de l'exécution de %s ----------", loggerName));
+        // On écrit le marqueur avec un niveau INFO. Il n'apparaîtra dans les fichiers que si l'ouverture
+        // a réussi et que le niveau minimum est <= INFO.
+        writeExecutionMarker(Level.INFO, String.format("---------- Début de l'exécution de %s ----------", managerName));
 
         // Initialiser les compteurs de messages de cette exécution
         for (Level level : Level.values()) {
             this.executionCounts.put(level, 0L); // Initialise tous les niveaux à 0
         }
 
+        System.out.println(String.format("Gestionnaire de Logger '%s' initialisé (niveau min par défaut: %s).",
+                managerName, minimumLevel));
 
-        System.out.println(String.format("Logger '%s' initialisé (niveau min: %s). Logs journaliers dans %s.",
-                loggerName, minimumLevel, dailyLogDirectory.toAbsolutePath()));
+        // --- IMPORTANT : Ajouter un Shutdown Hook pour s'assurer que close() est appelée ---
+        // Un shutdown hook est un thread qui s'exécute lorsque la JVM s'arrête proprement.
+        Runtime.getRuntime().addShutdownHook(new Thread(this::close)); // Utilise une référence de méthode à l'instance singleton
+        System.out.println("Shutdown hook pour le logger enregistré.");
     }
 
 
+
+
+    /**
+     * Retourne une poignée (handle) de logger pour le nom spécifié.
+     * Chaque appel avec le même nom retournera la même instance de poignée.
+     *
+     * @param name Le nom du logger (généralement le nom de la classe appelante).
+     * @return Une instance de {@link LoggerHandle} pour le nom spécifié.
+     */
+    public static LoggerHandle getLogger(String name) {
+        // Utilise computeIfAbsent pour créer la poignée si elle n'existe pas
+        // et la mettre dans la map, tout en gérant la concurrence.
+        return INSTANCE.loggerHandles.computeIfAbsent(name, LoggerHandle::new);
+    }
+
+
+
+    /**
+     * Représente une poignée de logger nommée.
+     * Les méthodes de log de cette poignée appellent la méthode de journalisation
+     * de l'instance unique de {@link CustomLogger}, en lui passant le nom de la poignée.
+     */
+    public static class LoggerHandle {
+        private final String name; // Le nom de ce logger (par ex. le nom de la classe)
+
+        /**
+         * Constructeur privé pour une poignée de logger nommée.
+         * Doit être créé via {@link CustomLogger#getLogger(String)}.
+         *
+         * @param name Le nom de ce logger.
+         */
+        private LoggerHandle(String name) {
+            this.name = Objects.requireNonNull(name, "Le nom de la poignée de logger ne peut pas être null.");
+        }
+
+        // Méthodes publiques pour chaque niveau, qui appellent le logger singleton
+
+        public void debug(String message) {
+            INSTANCE.log(Level.DEBUG, this.name, message);
+        }
+
+        public void info(String message) {
+            INSTANCE.log(Level.INFO, this.name, message);
+        }
+
+        public void warn(String message) {
+            INSTANCE.log(Level.WARN, this.name, message);
+        }
+
+        public void error(String message) {
+            INSTANCE.log(Level.ERROR, this.name, message);
+        }
+
+        public void fatal(String message) {
+            INSTANCE.log(Level.FATAL, this.name, message);
+        }
+
+        // Ajouter d'autres méthodes si le logger singleton en a d'autres publiques pour les poignées
+    }
 
 
 
@@ -159,12 +242,25 @@ public class CustomLogger {
      */
     public void setMinimumLevel(Level minimumLevel) {
         this.minimumLevel = Objects.requireNonNull(minimumLevel, "Le niveau minimum ne peut pas être null.");
-        System.out.println(String.format("Logger '%s' : Niveau minimum changé à %s.", loggerName, minimumLevel));
     }
 
 
 
+    // --- Méthodes de Configuration du Gestionnaire Singleton ---
 
+    /**
+     * Définit le niveau minimum de messages qui seront traités par TOUTES les poignées de logger.
+     * Les messages dont le niveau est strictement inférieur à ce seuil seront ignorés.
+     *
+     * @param minimumLevel Le nouveau niveau minimum.
+     */
+    public static void setGlobalMinimumLevel(Level minimumLevel) {
+        INSTANCE.setMinimumLevel(minimumLevel); // Appelle la méthode privée de l'instance singleton
+    }
+
+
+
+    // --- Initialisation / Gestion des écrivains de fichier (méthodes privées du Singleton) ---
 
     /**
      * Ouvre ou réutilise les fichiers de log dans le répertoire journalier spécifié en mode ajout (append).
@@ -174,9 +270,8 @@ public class CustomLogger {
      * @throws RuntimeException si l'ouverture d'un fichier échoue.
      */
     private void initFileWriters(Path dailyLogDirectory) {
-        // Pour cette implémentation simple, on ferme et rouvre si cette méthode est appelée
-        // alors que des écrivains sont déjà ouverts. Une version robuste gérerait mieux cela.
-        closeFileWriters(); // Ferme les écrivains existants si applicable
+        // Ferme les écrivains existants si applicable
+        closeFileWriters();
 
         for (Map.Entry<Level, String> entry : LOG_FILE_BASE_NAMES.entrySet()) {
             Level level = entry.getKey(); // Niveau (ex: INFO)
@@ -191,22 +286,19 @@ public class CustomLogger {
                 FileWriter fw = new FileWriter(filePath.toFile(), true);
                 PrintWriter pw = new PrintWriter(fw, true); // true pour auto-flush
                 this.levelWriters.put(level, pw);
-                // System.out.println("Fichier de log journalier ouvert pour niveau " + level + " : " + filePath.toAbsolutePath()); // Utile pour le débogage
             } catch (IOException e) {
                 System.err.println(String.format("ERREUR : Impossible d'ouvrir/écrire dans le fichier de log journalier pour le niveau %s : %s", level, filePath.toAbsolutePath()));
                 e.printStackTrace();
-                // Si l'ouverture d'un fichier échoue, on journalise l'erreur et on ne met pas d'écrivain pour ce niveau.
-                // Cela permet aux autres niveaux de continuer à logger dans leurs fichiers respectifs.
-                // MAIS, si c'est une erreur système (disque plein), toutes les ouvertures échoueront.
+                // L'écriture fichier ne sera pas possible pour ce niveau, le levelWriter restera absent/null dans la map.
             }
         }
     }
 
 
 
-
     /**
      * Ferme tous les écrivains de fichier ouverts.
+     * C'est une méthode privée du gestionnaire singleton.
      */
     private void closeFileWriters() {
         for (PrintWriter writer : levelWriters.values()) {
@@ -219,9 +311,11 @@ public class CustomLogger {
 
 
 
+
     /**
      * Écrit un marqueur spécial dans les fichiers de log.
      * Utilisé pour les marqueurs de début/fin d'exécution et le résumé.
+     * C'est une méthode privée du gestionnaire singleton.
      *
      * @param level Le niveau auquel associer le marqueur (détermine dans quels fichiers il est écrit).
      * @param markerMessage Le message du marqueur.
@@ -229,19 +323,23 @@ public class CustomLogger {
     private void writeExecutionMarker(Level level, String markerMessage) {
         String timestamp = LocalDateTime.now().format(messageFormatter);
         // Le format du marqueur est le même que celui des messages normaux dans les fichiers
+        // Note: Le loggerName utilisé dans le marqueur est celui du *gestionnaire*, pas d'une poignée spécifique
         String formattedMarker = String.format("[%s] [%s] [%s] %s",
                 timestamp,
                 level.name(),
-                loggerName,
+                managerName, // Utilise le nom du gestionnaire ici
                 markerMessage);
 
         // Écrit le marqueur dans le fichier correspondant au niveau spécifié et tous les niveaux supérieurs
         // qui ont un fichier dédié (selon LOG_FILE_BASE_NAMES)
+        // Synchroniser sur levelWriters ou les PrintWriter individuels pour la thread-safety
+        // Dans cette implémentation simple, on suppose que les appels sont rares ou que la non-thread-safety est acceptable.
         for (Map.Entry<Level, PrintWriter> entry : levelWriters.entrySet()) {
-            // On écrit le marqueur dans le fichier du niveau 'entry.getKey()' si ce niveau est >= au niveau du marqueur
             if (entry.getKey().ordinal() >= level.ordinal()) {
                 PrintWriter writer = entry.getValue();
                 if (writer != null) {
+                    // Synchroniser si thread-safe est requis pour l'écriture fichier
+                    // synchronized(writer) { writer.println(...) }
                     writer.println(formattedMarker);
                     writer.println(); // Ajoute une ligne vide après le marqueur pour la lisibilité
                 }
@@ -258,40 +356,44 @@ public class CustomLogger {
     }
 
 
-
-
+    // --- Méthode interne de journalisation (appelée par les poignées) ---
 
     /**
-     * Traite un message de journalisation s'il a un niveau suffisant.
+     * Traite un message de journalisation provenant d'une poignée de logger nommée.
      * Incrémente le compteur pour le niveau de message pour cette exécution.
      * Formatte le message différemment pour la console et les fichiers.
      * Envoie à la console et écrit dans le fichier correspondant au niveau (si configuré).
+     * <p>
+     * C'est une méthode privée du gestionnaire singleton.
      *
-     * @param level   Le niveau du message.
-     * @param message Le message à journaliser (peut être null).
+     * @param level     Le niveau du message.
+     * @param loggerName Le nom de la poignée de logger d'où provient le message.
+     * @param message   Le message à journaliser (peut être null).
      */
-    private void log(Level level, String message) {
+    private void log(Level level, String loggerName, String message) {
         // Incrémente le compteur pour ce niveau pour l'exécution actuelle
         // Utilise computeIfAbsent pour initialiser à 0L si le niveau n'était pas encore présent
         executionCounts.computeIfAbsent(level, k -> 0L);
         executionCounts.merge(level, 1L, Long::sum);
 
-        // Vérifie si le niveau du message est supérieur ou égal au niveau minimum configuré
+
+        // Vérifie si le niveau du message est supérieur ou égal au niveau minimum configuré globalement
         if (level.ordinal() >= this.minimumLevel.ordinal()) {
 
             String currentMessage = message == null ? "null" : message;
             String timestamp = LocalDateTime.now().format(messageFormatter);
 
-            // --- Format pour la console (Infos nécessaires seulement) ---
-            String consoleMessage = String.format("[%s] %s",
+            // --- Format pour la console (Infos nécessaires + nom du logger source) ---
+            String consoleMessage = String.format("[%s] [%s] %s",
                     level.name(),
+                    loggerName, // Ajoute le nom du logger source dans la console
                     currentMessage);
 
-            // --- Format pour le fichier (Infos complètes) ---
+            // --- Format pour le fichier (Infos complètes + nom du logger source) ---
             String fileMessage = String.format("[%s] [%s] [%s] %s",
                     timestamp,
                     level.name(),
-                    loggerName,
+                    loggerName, // Ajoute le nom du logger source dans le fichier
                     currentMessage);
 
             // --- Affichage sur la console ---
@@ -307,13 +409,15 @@ public class CustomLogger {
             if (LOG_FILE_BASE_NAMES.containsKey(level)) {
                 PrintWriter writer = levelWriters.get(level);
                 if (writer != null) {
-                    writer.println(fileMessage);
+                    // Synchroniser ici si thread-safe est requis pour l'écriture fichier
+                    // synchronized(writer) { writer.println(fileMessage); }
+                    writer.println(fileMessage); // Écriture simple (potentiellement non thread-safe si appels très fréquents et concurrents)
                     // L'auto-flush est activé (PrintWriter(fw, true))
                 } else {
-                    // Ceci ne devrait pas arriver si initFileWriters n'a pas échoué,
+                    // Ceci ne devrait pas arriver si initFileWriters n'a pas échoué pour ce niveau,
                     // mais gère le cas par sécurité.
                     // Note: on n'utilise pas ce logger pour journaliser cette erreur interne,
-                    // on utilise System.err directement pour éviter une boucle infinie.
+                    // on utilise System.err directement.
                     System.err.println(String.format("ERREUR INTERNE LOGGER: Écrivain de fichier non trouvé ou non initialisé pour le niveau: %s", level));
                 }
             }
@@ -324,75 +428,6 @@ public class CustomLogger {
 
 
 
-    /**
-     * Loggue un message de niveau DEBUG.
-     * Les messages DEBUG s'affichent sur la console si le niveau minimum le permet,
-     * mais ne sont pas enregistrés dans des fichiers spécifiques par défaut.
-     *
-     * @param message Le message à journaliser.
-     */
-    public void debug(String message) {
-        log(Level.DEBUG, message);
-    }
-
-
-
-
-    /**
-     * Loggue un message de niveau INFO.
-     * Les messages INFO s'affichent sur la console si le niveau minimum le permet
-     * et sont enregistrés dans le fichier journalier info.log dans le répertoire du jour.
-     *
-     * @param message Le message à journaliser.
-     */
-    public void info(String message) {
-        log(Level.INFO, message);
-    }
-
-
-
-
-    /**
-     * Loggue un message de niveau WARN.
-     * Les messages WARN s'affichent sur la console (System.err) si le niveau minimum le permet
-     * et sont enregistrés dans le fichier journalier warn.log dans le répertoire du jour.
-     *
-     * @param message Le message à journaliser.
-     */
-    public void warn(String message) {
-        log(Level.WARN, message);
-    }
-
-
-
-
-    /**
-     * Loggue un message de niveau ERROR.
-     * Les messages ERROR s'affichent sur la console (System.err) si le niveau minimum le permet
-     * et sont enregistrés dans le fichier journalier error.log dans le répertoire du jour.
-     *
-     * @param message Le message à journaliser.
-     */
-    public void error(String message) {
-        log(Level.ERROR, message);
-    }
-
-
-
-    /**
-     * Loggue un message de niveau FATAL.
-     * Les messages FATAL s'affichent sur la console (System.err) si le niveau minimum le permet
-     * et sont enregistrés dans le fichier journalier fatal.log dans le répertoire du jour.
-     *
-     * @param message Le message à journaliser.
-     */
-    public void fatal(String message) {
-        log(Level.FATAL, message);
-    }
-
-
-
-    // --- Méthode de Nettoyage (TRÈS IMPORTANT À APPELER) ---
 
     /**
      * Écrit le marqueur de fin d'exécution avec le résumé des messages de cette exécution,
@@ -402,12 +437,12 @@ public class CustomLogger {
      * pour garantir que les logs de la fin d'exécution et le résumé sont bien enregistrés
      * et que les ressources (flux de fichiers) sont libérées.
      * <p>
-     * Une bonne pratique est d'utiliser un {@link Runtime#addShutdownHook(Thread)}
-     * ou d'appeler cette méthode lors de la fermeture de la fenêtre principale de votre application Swing
-     * (par exemple, dans un {@link java.awt.event.WindowListener#windowClosing(java.awt.event.WindowEvent)}
-     * ou si {@link JFrame#setDefaultCloseOperation(int)} est réglé sur {@link JFrame#EXIT_ON_CLOSE}).
+     * L'appel de cette méthode est automatiquement géré par un {@link Runtime#addShutdownHook(Thread)}
+     * enregistré lors de l'initialisation de l'instance unique. Cependant, si vous arrêtez la JVM
+     * de manière non propre ({@code kill -9}), ce hook pourrait ne pas s'exécuter.
+     * C'est une méthode privée du gestionnaire singleton.
      */
-    public void close() {
+    private void close() {
         // Écrire le marqueur de fin d'exécution avec le résumé des messages de cette exécution
         // On écrit le marqueur avec un niveau INFO pour qu'il apparaisse dans info.log (et fichiers supérieurs)
         writeExecutionMarker(Level.INFO, formatExecutionSummary());
@@ -415,8 +450,9 @@ public class CustomLogger {
         // Fermer tous les écrivains de fichier ouverts
         closeFileWriters();
 
-        System.out.println(String.format("Logger '%s' arrêté. Fichiers de log fermés.", loggerName));
+        System.out.println(String.format("Gestionnaire de Logger '%s' arrêté. Fichiers de log fermés.", managerName));
     }
+
 
 
 
@@ -433,16 +469,13 @@ public class CustomLogger {
 
         StringBuilder summary = new StringBuilder();
         summary.append(String.format("---------- Fin de l'exécution de %s [%s] (Durée: ~%d secondes) ----------\n",
-                loggerName, executionEndTime.format(messageFormatter), duration.getSeconds()));
+                managerName, executionEndTime.format(messageFormatter), duration.getSeconds()));
 
-        summary.append("Résumé des messages loggés pendant cette exécution :\n");
+        summary.append("Résumé des messages loggés pendant cette exécution par niveau:\n");
         // Afficher les comptes par niveau, du plus sévère au moins sévère
-        boolean hasLoggedAnything = false;
-        // Parcourir les niveaux dans l'ordre de déclaration (du moins au plus sévère)
-        // pour les afficher du plus au moins sévère, on peut inverser l'itération ou stocker dans une liste triée
-        // Affichons du plus sévère au moins sévère pour le résumé
         Level[] levelsInOrder = Level.values();
-        for (int i = levelsInOrder.length - 1; i >= 0; i--) {
+        boolean hasLoggedAnything = false;
+        for (int i = levelsInOrder.length - 1; i >= 0; i--) { // Parcourir de FATAL à DEBUG
             Level level = levelsInOrder[i];
             Long count = executionCounts.get(level);
             if (count != null && count > 0) {
@@ -452,11 +485,85 @@ public class CustomLogger {
         }
 
         if (!hasLoggedAnything) {
-            summary.append("  (Aucun message loggé par cette exécution au-dessus du niveau minimum configuré ou du niveau DEBUG).\n");
+            summary.append("  (Aucun message loggé par cette exécution au-dessus du niveau DEBUG).\n");
         }
-        summary.append("-------------------------------------------------------------------------------------------------------------------------------------------------------------");
+
+        // Optionnel : Ajouter un résumé par logger source si besoin (complexité accrue)
+        // summary.append("\nRésumé par logger source :\n");
+        // ... logique pour parcourir les messages loggés par loggerHandle ...
+
+
+        summary.append("---------------------------------------------------------------------------------------------------------------------------------");
 
         return summary.toString();
     }
 
+
+    // --- Exemple d'utilisation ---
+
+    public static void main(String[] args) {
+        // Configurer le niveau minimum global de journalisation au début de l'application
+        // Par défaut, il est INFO. On peut le changer ici si besoin.
+        // CustomLogger.setGlobalMinimumLevel(CustomLogger.Level.DEBUG); // Pour voir les messages DEBUG
+
+        // Obtenir des poignées de logger par nom dans différentes "classes"
+        // On utilise la méthode statique getLogger()
+        LoggerHandle mainLogger = CustomLogger.getLogger("com.yourcompany.yourgame.MainApp");
+        LoggerHandle uiLogger = CustomLogger.getLogger("com.yourcompany.yourgame.UI.GameScreen");
+        LoggerHandle gameLogicLogger = CustomLogger.getLogger("com.yourcompany.yourgame.GameLogic");
+
+
+        mainLogger.info("Application démarrée."); // Loggé via la poignée mainLogger
+
+        uiLogger.debug("Mise à jour de l'écran graphique."); // Loggé via la poignée uiLogger (s'affiche si niveau min <= DEBUG)
+
+        try {
+            // Simule une opération dans la logique du jeu qui loggue
+            gameLogicLogger.info("Tentative de division...");
+            int result = divide(10, 2, gameLogicLogger); // Passe la poignée logger à la méthode
+            gameLogicLogger.debug("Division réussie, résultat : " + result);
+
+            result = divide(10, 0, gameLogicLogger); // Passe la poignée logger
+            gameLogicLogger.info("Résultat de la division par zéro (géré) : " + result); // Loggué INFO
+        } catch (Exception e) {
+            gameLogicLogger.error("Une erreur inattendue s'est produite dans la logique du jeu : " + e.getMessage()); // Loggué ERROR
+        }
+
+        uiLogger.warn("Certaines ressources pourraient être manquantes."); // Loggué WARN
+
+        // Simule une erreur FATAL qui pourrait survenir dans le main
+        if (Math.random() < 0.4) { // 40% de chance de déclencher l'erreur FATAL simulée
+            mainLogger.fatal("Une erreur système critique a rendu l'application instable. Arrêt imminent."); // Loggué FATAL
+            // Dans une vraie situation FATAL non gérée, la JVM s'arrêterait, déclenchant le shutdown hook.
+        }
+
+
+        mainLogger.info("Application en cours d'exécution..."); // Ce message pourrait apparaître ou non selon l'erreur FATAL simulée
+
+        // L'appel à la méthode close() du gestionnaire singleton est géré automatiquement
+        // par le Shutdown Hook enregistré dans le constructeur de CustomLogger.
+        // Vous n'avez pas besoin d'appeler CustomLogger.INSTANCE.close() ici.
+        // Le hook assure que les logs finaux et le résumé sont écrits.
+    }
+
+    // Petite méthode d'exemple montrant comment utiliser une poignée de logger passée en paramètre
+    private static int divide(int a, int b, LoggerHandle logger) {
+        if (b == 0) {
+            logger.warn("Tentative de division par zéro !"); // Utilise la poignée passée en paramètre
+            return 0; // Retourne 0 ou lancez une exception selon la logique du jeu
+        }
+        // Loggue en debug si le niveau minimum le permet
+        logger.debug("Calcul de division : " + a + " / " + b + "."); // Loggué DEBUG
+        return a / b;
+    }
+
+    // Méthode d'exemple simulant une situation (non utilisée dans main ici, mais pour illustration)
+    private static void processData(LoggerHandle logger) {
+        logger.info("Traitement des données...");
+        // ... logique de traitement ...
+        logger.debug("Étape intermédiaire complétée.");
+        if (Math.random() > 0.8) {
+            logger.error("Erreur de validation des données.");
+        }
+    }
 }
