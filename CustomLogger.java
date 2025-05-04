@@ -1,3 +1,5 @@
+package Global;
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -76,20 +78,20 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
     private static final CustomLogger INSTANCE = new CustomLogger("Application"); // Nom par défaut du logger manager
 
     // --- Attributs du Gestionnaire Singleton ---
-    private String managerName; // Nom de ce gestionnaire (pour les marqueurs d'exécution)
+    private final String managerName; // Nom de ce gestionnaire (pour les marqueurs d'exécution)
     private Level minimumLevel; // Niveau minimum de message à traiter (configuration globale)
-    private LocalDateTime executionStartTime; // Timestamp du début de cette exécution
+    private final LocalDateTime executionStartTime; // Timestamp du début de cette exécution
 
     // Mappe pour stocker les écrivains de fichier pour chaque niveau ayant un fichier dédié
-    private Map<Level, PrintWriter> levelWriters;
+    private final Map<Level, PrintWriter> levelWriters;
     // Mappe pour stocker le compte des messages loggés par cette exécution, par niveau
-    private Map<Level, Long> executionCounts;
+    private final Map<Level, Long> executionCounts;
     // Mappe pour stocker les instances de LoggerHandle créées par nom (simple cache)
     private final Map<String, LoggerHandle> loggerHandles; // Utiliser ConcurrentHashMap pour Thread Safety si getLogger est appelé par plusieurs threads
 
     // Formatteurs de date et heure
     private DateTimeFormatter directoryDateFormatter; // Pour le nom du répertoire journalier (date seule)
-    private DateTimeFormatter messageFormatter; // Pour les timestamps dans les messages
+    private final DateTimeFormatter messageFormatter; // Pour les timestamps dans les messages
 
     // Définition des noms de base des fichiers de log par niveau ayant un fichier dédié (INFO et supérieurs)
     private static Map<Level, String> LOG_FILE_BASE_NAMES;
@@ -105,7 +107,7 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
      * @param managerName Le nom du gestionnaire de logger (utilisé dans les marqueurs d'exécution).
      * @throws RuntimeException si la création des répertoires ou l'ouverture d'un fichier échoue.
      */
-    private CustomLogger(String managerName) {
+    public CustomLogger(String managerName) {
         this.managerName = Objects.requireNonNull(managerName, "Le nom du gestionnaire de logger ne peut pas être null.");
         this.minimumLevel = Level.INFO; // Niveau minimum par défaut, peut être changé par setMinimumLevel()
         this.executionStartTime = LocalDateTime.now(); // Enregistre l'heure de début de cette exécution
@@ -238,7 +240,7 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
      *
      * @param minimumLevel Le nouveau niveau minimum.
      */
-    public void setMinimumLevel(Level minimumLevel) {
+    private void setMinimumLevel(Level minimumLevel) {
         this.minimumLevel = Objects.requireNonNull(minimumLevel, "Le niveau minimum ne peut pas être null.");
     }
 
@@ -250,10 +252,38 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
      * Définit le niveau minimum de messages qui seront traités par TOUTES les poignées de logger.
      * Les messages dont le niveau est strictement inférieur à ce seuil seront ignorés.
      *
+     * {@code DEBUG} Messages très détaillés pour le débogage (ordinal 0)
+     * {@code INFO} Informations générales sur le déroulement normal (ordinal 1)
+     * {@code WARN} Avertissements, situations potentiellement problématiques (ordinal 2)
+     * {@code ERROR} Erreurs qui affectent une fonctionnalité mais non bloquantes (ordinal 3)
+     * {@code FATAL} Erreurs très graves, pouvant entraîner l'arrêt de l'application (ordinal 4)
+     *
+     * par défaut : INFO
+     *
      * @param minimumLevel Le nouveau niveau minimum.
+     *
      */
-    public static void setGlobalMinimumLevel(Level minimumLevel) {
-        INSTANCE.setMinimumLevel(minimumLevel); // Appelle la méthode privée de l'instance singleton
+    public void setGlobalMinimumLevel(String minimumLevel) {
+        switch (minimumLevel){
+            case "DEBUG":
+                INSTANCE.setMinimumLevel(Level.DEBUG); // Appelle la méthode privée de l'instance singleton
+                break;
+            case "INFO":
+                INSTANCE.setMinimumLevel(Level.INFO);
+                break;
+            case "WARN":
+                INSTANCE.setMinimumLevel(Level.WARN);
+                break;
+            case "ERROR":
+                INSTANCE.setMinimumLevel(Level.ERROR);
+                break;
+            case "FATAL":
+                INSTANCE.setMinimumLevel(Level.FATAL);
+                break;
+            default:
+                INSTANCE.log(Level.WARN, "Application", "Erreur de définition du niveau minimum de messages qui seront traités par TOUTES les poignées de logge");
+                break;
+        }
     }
 
 
@@ -495,5 +525,5 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
 
         return summary.toString();
     }
-    
+
 }
