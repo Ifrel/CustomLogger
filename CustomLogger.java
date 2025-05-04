@@ -238,7 +238,7 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
      *
      * @param minimumLevel Le nouveau niveau minimum.
      */
-    private static void setMinimumLevel(Level minimumLevel) {
+    private void setMinimumLevel(Level minimumLevel) {
         this.minimumLevel = Objects.requireNonNull(minimumLevel, "Le niveau minimum ne peut pas être null.");
     }
 
@@ -261,7 +261,7 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
      * @param minimumLevel Le nouveau niveau minimum.
      *
      */
-    public void setGlobalMinimumLevel(String minimumLevel) {
+    public static void setGlobalMinimumLevel(String minimumLevel) {
         switch (minimumLevel){
             case "DEBUG":
                 INSTANCE.setMinimumLevel(Level.DEBUG); // Appelle la méthode privée de l'instance singleton
