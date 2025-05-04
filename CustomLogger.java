@@ -238,7 +238,7 @@ public class CustomLogger { // La classe principale devient le gestionnaire sing
      *
      * @param minimumLevel Le nouveau niveau minimum.
      */
-    private void setMinimumLevel(Level minimumLevel) {
+    private static void setMinimumLevel(Level minimumLevel) {
         this.minimumLevel = Objects.requireNonNull(minimumLevel, "Le niveau minimum ne peut pas être null.");
     }
 
